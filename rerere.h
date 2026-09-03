@@ -39,6 +39,12 @@ int rerere_remaining(struct repository *, struct string_list *);
 void rerere_clear(struct repository *, struct string_list *);
 void rerere_gc(struct repository *, struct string_list *);
 
+/*
+ * Estimate the number of stale entries that a run of "git rerere gc"
+ * would prune.
+ */
+size_t rerere_gc_estimate(struct repository *r, size_t limit);
+
 #define OPT_RERERE_AUTOUPDATE(v) OPT_UYN(0, "rerere-autoupdate", (v), \
 	N_("update the index with reused conflict resolution if possible"))
 
