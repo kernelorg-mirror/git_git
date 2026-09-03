@@ -2535,22 +2535,59 @@ static void update_shallow_info(struct command *commands,
 	free(ref_status);
 }
 
-static void report(struct command *commands, const char *unpack_status)
+/*
+ * Generate the response to be sent to the client invoking 'git-receive-pack(1)'.
+ * For v2 protocol, set `detailed_report` to true, which will also add detailed
+ * report per reference update.
+ */
+static void generate_report(struct strbuf *buf, struct command *commands,
+			    const char *unpack_status,
+			    enum report_status_version version)
 {
 	struct command *cmd;
+
+	packet_buf_write(buf, "unpack %s\n",
+			 unpack_status ? unpack_status : "ok");
+
+	for (cmd = commands; cmd; cmd = cmd->next) {
+		struct ref_push_report *report;
+		int count = 0;
+
+		if (cmd->error_string)
+			packet_buf_write(buf, "ng %s %s\n",
+					 cmd->ref_name, cmd->error_string);
+		else
+			packet_buf_write(buf, "ok %s\n", cmd->ref_name);
+
+		if (version != REPORT_STATUS_V2 || cmd->error_string)
+			continue;
+
+		for (report = cmd->report; report; report = report->next) {
+			if (count++ > 0)
+				packet_buf_write(buf, "ok %s\n",
+						 cmd->ref_name);
+			if (report->ref_name)
+				packet_buf_write(buf, "option refname %s\n",
+						 report->ref_name);
+			if (report->old_oid)
+				packet_buf_write(buf, "option old-oid %s\n",
+						 oid_to_hex(report->old_oid));
+			if (report->new_oid)
+				packet_buf_write(buf, "option new-oid %s\n",
+						 oid_to_hex(report->new_oid));
+			if (report->forced_update)
+				packet_buf_write(buf, "option forced-update\n");
+		}
+	}
+
+	packet_buf_flush(buf);
+}
+
+static void report(struct command *commands, const char *unpack_status)
+{
 	struct strbuf buf = STRBUF_INIT;
 
-	packet_buf_write(&buf, "unpack %s\n",
-			 unpack_status ? unpack_status : "ok");
-	for (cmd = commands; cmd; cmd = cmd->next) {
-		if (!cmd->error_string)
-			packet_buf_write(&buf, "ok %s\n",
-					 cmd->ref_name);
-		else
-			packet_buf_write(&buf, "ng %s %s\n",
-					 cmd->ref_name, cmd->error_string);
-	}
-	packet_buf_flush(&buf);
+	generate_report(&buf, commands, unpack_status, REPORT_STATUS_V0);
 
 	if (use_sideband)
 		send_sideband(1, 1, buf.buf, buf.len, use_sideband);
@@ -2561,41 +2598,9 @@ static void report(struct command *commands, const char *unpack_status)
 
 static void report_v2(struct command *commands, const char *unpack_status)
 {
-	struct command *cmd;
 	struct strbuf buf = STRBUF_INIT;
-	struct ref_push_report *report;
 
-	packet_buf_write(&buf, "unpack %s\n",
-			 unpack_status ? unpack_status : "ok");
-	for (cmd = commands; cmd; cmd = cmd->next) {
-		int count = 0;
-
-		if (cmd->error_string) {
-			packet_buf_write(&buf, "ng %s %s\n",
-					 cmd->ref_name,
-					 cmd->error_string);
-			continue;
-		}
-		packet_buf_write(&buf, "ok %s\n",
-				 cmd->ref_name);
-		for (report = cmd->report; report; report = report->next) {
-			if (count++ > 0)
-				packet_buf_write(&buf, "ok %s\n",
-						 cmd->ref_name);
-			if (report->ref_name)
-				packet_buf_write(&buf, "option refname %s\n",
-						 report->ref_name);
-			if (report->old_oid)
-				packet_buf_write(&buf, "option old-oid %s\n",
-						 oid_to_hex(report->old_oid));
-			if (report->new_oid)
-				packet_buf_write(&buf, "option new-oid %s\n",
-						 oid_to_hex(report->new_oid));
-			if (report->forced_update)
-				packet_buf_write(&buf, "option forced-update\n");
-		}
-	}
-	packet_buf_flush(&buf);
+	generate_report(&buf, commands, unpack_status, REPORT_STATUS_V2);
 
 	if (use_sideband)
 		send_sideband(1, 1, buf.buf, buf.len, use_sideband);
